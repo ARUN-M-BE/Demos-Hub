@@ -1,17 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Card, Button } from '../Shared';
-import { Activity, AlertTriangle } from 'lucide-react';
+import { Activity, AlertTriangle, Play, Pause } from 'lucide-react';
 import * as d3 from 'd3';
 
 export const FinancialAgent = () => {
     const svgRef = useRef<SVGSVGElement>(null);
     const [anomalyScore, setAnomalyScore] = useState(0);
     const [nodeCount, setNodeCount] = useState(15);
+    const [isPaused, setIsPaused] = useState(false);
+    const isPausedRef = useRef(false);
     
     // Validation State
     const [apiInput, setApiInput] = useState('');
     const [inputError, setInputError] = useState<string | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+    useEffect(() => {
+        isPausedRef.current = isPaused;
+    }, [isPaused]);
 
     useEffect(() => {
         if (!svgRef.current) return;
@@ -20,51 +26,86 @@ export const FinancialAgent = () => {
         const height = 450;
         
         // Initial Data
-        let nodes = Array.from({ length: 15 }, (_, i) => ({ id: i, group: Math.floor(Math.random() * 3), suspicious: Math.random() > 0.8, x: width/2 + (Math.random() - 0.5) * 50, y: height/2 + (Math.random() - 0.5) * 50 }));
-        let links = Array.from({ length: 20 }, () => ({ source: Math.floor(Math.random() * 15), target: Math.floor(Math.random() * 15) }));
+        let nodes: any[] = Array.from({ length: 15 }, (_, i) => ({ 
+            id: i, 
+            group: Math.floor(Math.random() * 3), 
+            suspicious: Math.random() > 0.8, 
+            x: width/2 + (Math.random() - 0.5) * 50, 
+            y: height/2 + (Math.random() - 0.5) * 50 
+        }));
+        let links: any[] = Array.from({ length: 20 }, () => ({ 
+            source: Math.floor(Math.random() * 15), 
+            target: Math.floor(Math.random() * 15) 
+        })).filter(l => l.source !== l.target);
 
         const updateScore = () => {
            setAnomalyScore(Math.round((nodes.filter(n => n.suspicious).length / nodes.length) * 100));
         };
         updateScore();
 
-        // Simulation
-        const simulation = d3.forceSimulation(nodes as any)
-            .force("link", d3.forceLink(links).id((d: any) => d.id).distance(60))
-            .force("charge", d3.forceManyBody().strength(-200))
-            .force("center", d3.forceCenter(width / 2, height / 2));
+        // Simulation Setup
+        const simulation = d3.forceSimulation(nodes)
+            .force("link", d3.forceLink(links).id((d: any) => d.id).distance(80))
+            .force("charge", d3.forceManyBody().strength(-150))
+            .force("center", d3.forceCenter(width / 2, height / 2))
+            .force("collide", d3.forceCollide().radius(12).strength(0.7));
 
         // SVG Groups
-        const linkGroup = svg.append("g").attr("stroke", "#94a3b8").attr("stroke-opacity", 0.6);
-        const nodeGroup = svg.append("g").attr("stroke", "#fff").attr("stroke-width", 1.5);
+        // Clear previous if any (though useEffect runs once, good practice)
+        svg.selectAll("*").remove();
+        
+        const linkGroup = svg.append("g").attr("class", "links");
+        const nodeGroup = svg.append("g").attr("class", "nodes");
+
+        // Drag Behavior
+        const drag = d3.drag<any, any>()
+            .on("start", (event, d) => {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x; d.fy = d.y;
+            })
+            .on("drag", (event, d) => { d.fx = event.x; d.fy = event.y; })
+            .on("end", (event, d) => {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null; d.fy = null;
+            });
 
         const restart = () => {
             // Apply Data Join for Links
-            const link = linkGroup.selectAll("line").data(links);
-            link.exit().remove();
-            const linkEnter = link.enter().append("line").attr("stroke-width", 1.5);
+            const link = linkGroup.selectAll("line")
+                .data(links, (d: any) => `${d.source.id || d.source}-${d.target.id || d.target}`);
+            
+            link.exit()
+                .transition().duration(500)
+                .attr("opacity", 0)
+                .remove();
+
+            const linkEnter = link.enter().append("line")
+                .attr("stroke", "#94a3b8")
+                .attr("stroke-opacity", 0)
+                .attr("stroke-width", 1.5);
+            
+            linkEnter.transition().duration(750).attr("stroke-opacity", 0.6);
+
             const newLink = linkEnter.merge(link as any);
 
             // Apply Data Join for Nodes
-            const node = nodeGroup.selectAll("circle").data(nodes, (d: any) => d.id);
-            node.exit().remove();
+            const node = nodeGroup.selectAll("circle")
+                .data(nodes, (d: any) => d.id);
+            
+            node.exit()
+                .transition().duration(500)
+                .attr("r", 0)
+                .remove();
             
             const nodeEnter = node.enter().append("circle")
-                .attr("r", 0) // Start with radius 0 for animation
+                .attr("r", 0) 
                 .attr("fill", (d: any) => d.suspicious ? "#ef4444" : "#3b82f6")
-                .call(d3.drag<any, any>()
-                    .on("start", (event, d) => {
-                        if (!event.active) simulation.alphaTarget(0.3).restart();
-                        d.fx = d.x; d.fy = d.y;
-                    })
-                    .on("drag", (event, d) => { d.fx = event.x; d.fy = event.y; })
-                    .on("end", (event, d) => {
-                        if (!event.active) simulation.alphaTarget(0);
-                        d.fx = null; d.fy = null;
-                    }));
+                .attr("stroke", "#fff")
+                .attr("stroke-width", 1.5)
+                .call(drag);
             
-            // Animate entry
-            nodeEnter.transition().duration(500).attr("r", 8);
+            nodeEnter.transition().duration(750)
+                .attr("r", 8); // Fixed from attrTween to attr for type safety and simplicity
 
             const newNode = nodeEnter.merge(node as any);
 
@@ -81,26 +122,59 @@ export const FinancialAgent = () => {
                     .attr("cy", (d: any) => d.y);
             });
             
-            simulation.nodes(nodes as any);
-            simulation.force("link", d3.forceLink(links).id((d: any) => d.id).distance(60));
-            simulation.alpha(1).restart();
+            simulation.nodes(nodes);
+            (simulation.force("link") as d3.ForceLink<any, any>).links(links);
+            simulation.alpha(0.5).restart();
         };
 
         restart();
 
         // Real-time Data Simulation
         const interval = setInterval(() => {
-            if (nodes.length > 50) return; // Cap at 50 to prevent overcrowding
+            if (isPausedRef.current) return;
             
-            const newId = nodes.length;
+            // Limit node count to prevent performance issues
+            if (nodes.length > 35) {
+                 // Remove a random node (prefer older ones logic omitted for simplicity, just random)
+                 const indexToRemove = Math.floor(Math.random() * 10); 
+                 const idToRemove = nodes[indexToRemove].id;
+                 nodes.splice(indexToRemove, 1);
+                 // Remove links attached to it
+                 for (let i = links.length - 1; i >= 0; i--) {
+                     if (links[i].source.id === idToRemove || links[i].target.id === idToRemove || links[i].source === idToRemove || links[i].target === idToRemove) {
+                         links.splice(i, 1);
+                     }
+                 }
+            }
+            
+            const newId = (nodes.reduce((max, n) => Math.max(max, n.id), 0) || 0) + 1;
             const isSuspicious = Math.random() > 0.85;
-            // Spawn near center
-            const newNode = { id: newId, group: Math.floor(Math.random() * 3), suspicious: isSuspicious, x: width/2, y: height/2 };
-            nodes.push(newNode);
+            
+            // Pick a target to connect to
+            const targetIndex = Math.floor(Math.random() * nodes.length);
+            const targetNode = nodes[targetIndex];
 
-            // Link to random existing node
-            const target = Math.floor(Math.random() * (nodes.length - 1));
-            links.push({ source: newId, target: target } as any);
+            // Spawn near target for smoother entry
+            if (targetNode) {
+                const newNode = { 
+                    id: newId, 
+                    group: Math.floor(Math.random() * 3), 
+                    suspicious: isSuspicious, 
+                    x: targetNode.x + (Math.random() - 0.5) * 30, 
+                    y: targetNode.y + (Math.random() - 0.5) * 30 
+                };
+                nodes.push(newNode);
+
+                links.push({ source: newId, target: targetNode.id });
+
+                // Occasionally add a second link for complexity
+                if (Math.random() > 0.7) {
+                    const secondTarget = Math.floor(Math.random() * nodes.length);
+                    if (secondTarget !== targetIndex) {
+                        links.push({ source: newId, target: nodes[secondTarget].id });
+                    }
+                }
+            }
 
             setNodeCount(nodes.length);
             updateScore();
@@ -112,7 +186,7 @@ export const FinancialAgent = () => {
             simulation.stop();
             svg.selectAll("*").remove();
         };
-    }, []);
+    }, []); // Run once on mount
 
     const handleAnalyze = () => {
         if (!apiInput.trim()) {
@@ -144,13 +218,29 @@ export const FinancialAgent = () => {
             <div className="lg:col-span-2">
                 <Card className="h-[450px] w-full bg-slate-50 dark:bg-slate-900 overflow-hidden relative">
                     <svg ref={svgRef} className="w-full h-full" />
-                    <div className="absolute top-4 left-4 flex gap-4 text-xs z-10 bg-white/50 dark:bg-black/50 p-2 rounded backdrop-blur-sm">
+                    
+                    {/* Legend */}
+                    <div className="absolute top-4 left-4 flex gap-4 text-xs z-10 bg-white/80 dark:bg-black/80 p-2 rounded backdrop-blur-sm shadow-sm border border-slate-200 dark:border-slate-700">
                         <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-blue-500"></div> Safe</div>
                         <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-red-500"></div> Suspicious</div>
                         <div className="flex items-center gap-1 border-l pl-2 border-slate-400">Nodes: {nodeCount}</div>
                     </div>
-                    <div className="absolute top-4 right-4 text-xs text-slate-500 animate-pulse flex items-center gap-1">
-                        <Activity className="w-3 h-3" /> Live Stream Active
+                    
+                    {/* Controls */}
+                    <div className="absolute top-4 right-4 flex gap-2 z-10">
+                        <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={() => setIsPaused(!isPaused)}
+                            className="bg-white/80 dark:bg-black/50 backdrop-blur-sm border-slate-200 dark:border-slate-700 h-8 text-xs flex items-center gap-1.5"
+                        >
+                            {isPaused ? <Play className="w-3 h-3 fill-current" /> : <Pause className="w-3 h-3 fill-current" />}
+                            {isPaused ? "Resume" : "Pause"}
+                        </Button>
+                        <div className={`flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-lg bg-white/80 dark:bg-black/50 backdrop-blur-sm border border-slate-200 dark:border-slate-700 ${isPaused ? 'text-slate-500' : 'text-green-600 dark:text-green-400'}`}>
+                             <Activity className={`w-3 h-3 ${!isPaused && 'animate-pulse'}`} />
+                             {isPaused ? 'Paused' : 'Live'}
+                        </div>
                     </div>
                 </Card>
             </div>
