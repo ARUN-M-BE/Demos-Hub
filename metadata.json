@@ -1,0 +1,5 @@
+{
+  "name": "AI Agent Hub",
+  "description": "A comprehensive dashboard managing 9 specialized AI agents for various industry domains, powered by Gemini models.",
+  "requestFramePermissions": []
+}
